@@ -1,4 +1,4 @@
-# Master Thesis Emanuel Nussli
+# Nuisance IV
 
 This repository contains the code and notebooks for my master thesis. 
 Below are instructions to set up and run the code.
