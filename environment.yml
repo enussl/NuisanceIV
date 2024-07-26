@@ -1,0 +1,13 @@
+name: nuisanceiv-env
+channels:
+  - conda-forge
+dependencies:
+  - python
+  - pandas
+  - numpy
+  - networkx
+  - matplotlib
+  - linearmodels
+  - scipy
+  - statsmodels
+  - seaborn
