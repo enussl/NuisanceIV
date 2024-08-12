@@ -1,5 +1,53 @@
-class AdjustmentSetFinder:
-    def __init__(self, dag: nx.DiGraph, X: Set[str], Y: str, hidden_nodes: Set[str] = set(), type_effect: str = "direct", one_suffices: bool = True):
+import sys
+import random
+import time
+import pandas as pd
+import numpy as np
+import networkx as nx
+from networkx import algorithms
+from networkx.utils import groups
+
+from itertools import chain, combinations
+from collections import deque 
+from collections import defaultdict
+import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
+from matplotlib.patches import FancyBboxPatch
+import seaborn as sns
+from scipy import stats
+
+from typing import List, Set, Dict, Optional, Union
+
+from linearmodels.iv import IVGMM
+import scipy.linalg as slg
+import statsmodels.api as sm
+
+import warnings
+import inspect
+
+
+
+class NIVStrategyFinder:
+    def __init__(
+        self,
+        dag: nx.DiGraph,
+        X: Set[str],
+        Y: str,
+        hidden_nodes: Set[str] = set(),
+        type_effect: str = "direct",
+        one_suffices: bool = True,
+    ):
+        """
+        Initializes the NIVStrategyFinder class.
+
+        Args:
+        - dag: Directed acyclic graph (DiGraph) representing the causal structure.
+        - X: Set of treatment variables.
+        - Y: Outcome variable.
+        - hidden_nodes: Set of hidden nodes in the graph.
+        - type_effect: Type of effect to consider ('direct' or 'total').
+        - one_suffices: If True, return as soon as one valid adjustment set is found.
+        """
         self.dag = dag
         self.X = X
         self.Y = Y
@@ -24,21 +72,25 @@ class AdjustmentSetFinder:
         :return: A list of lists specifying the node identifiers on the path between source and destination (inclusive of
                  the source and destination node identifiers). An empty list is returned if no paths are available.
         """
-        assert nx.is_directed_acyclic_graph(self.dag), 'This method only works for DAGs but the current graph is not a DAG.'
-        assert source in self.dag.nodes and destination in self.dag.nodes, 'Source or destination node not in graph.'
+        assert nx.is_directed_acyclic_graph(self.dag), (
+            "This method only works for DAGs but the current graph is not a DAG."
+        )
+        assert (
+            source in self.dag.nodes and destination in self.dag.nodes
+        ), "Source or destination node not in graph."
 
         if source == destination:
             return []
 
         return list(nx.all_simple_paths(self.dag, source, destination))
-    
+
     def remove_causal_paths(self):
         """
         Removes nodes on all causal paths from X to Y in the DAG.
         """
         self.modified_graph = self.dag.copy()
         causal_nodes = set()
-        
+
         for node_x in self.X:
             causal_paths_from_x_to_Y = self.get_all_causal_paths(node_x, self.Y)
             for path in causal_paths_from_x_to_Y:
@@ -52,12 +104,12 @@ class AdjustmentSetFinder:
 
                 for i in range(len(path) - 1):
                     current_node = path[i]
-                    next_node = path[i+1]
+                    next_node = path[i + 1]
 
                     if has_incoming_edge:
                         break
 
-                    if current_node != node_x:  
+                    if current_node != node_x:
                         incoming_edges = list(self.dag.in_edges(current_node, data=True))
                         for edge in incoming_edges:
                             if edge[0] not in causal_nodes:
@@ -69,7 +121,7 @@ class AdjustmentSetFinder:
                             self.modified_graph.remove_edge(current_node, next_node)
 
         return self.modified_graph
-            
+
     def generate_subsets(self, type_set: str, removed_nodes: Set[str]) -> List[Set[str]]:
         """
         Generates all possible subsets of the remaining nodes in the modified graph.
@@ -82,7 +134,6 @@ class AdjustmentSetFinder:
         - List of all possible subsets of nodes in the graph with size >= |X| if type_set is "instrument",
           otherwise, it returns all possible subsets of nodes in the graph.
         """
-        
         nodes = list(self.modified_graph.nodes())
         for cn in self.nodes_on_causal_path.union(removed_nodes).union(self.hidden_nodes):
             nodes.remove(cn)
@@ -110,7 +161,7 @@ class AdjustmentSetFinder:
             removed_nodes = subset
             remaining_subsets = self.generate_subsets("conditional", removed_nodes)
             self.subset_combinations.append(remaining_subsets)
-            
+
         return self.subset_combinations
 
     def is_d_separator(self, x, y, z, graph: Optional[nx.DiGraph] = None) -> bool:
@@ -129,7 +180,7 @@ class AdjustmentSetFinder:
         Returns:
         - bool: True if `x` is d-separated from `y` given `z`.
         """
-        graph = graph or self.modified_graph 
+        graph = graph or self.modified_graph
 
         try:
             x = set(x) if isinstance(x, (set, list, tuple)) else {x}
@@ -140,7 +191,7 @@ class AdjustmentSetFinder:
             z = z - (x | y)
 
             if not x or not y:
-                return True 
+                return True
 
             set_v = x | y | z
             if set_v - graph.nodes:
@@ -182,7 +233,7 @@ class AdjustmentSetFinder:
                     forward_deque.extend(graph.succ[node].keys() - forward_visited)
 
         return True
-    
+
     def find_adjustment_sets_conditional(self) -> List[Dict[str, Set[str]]]:
         """
         Tests whether each subset is d-separated from Y given the combination in the modified graph,
@@ -211,28 +262,27 @@ class AdjustmentSetFinder:
                         if self.one_suffices:
                             return d_separated_sets
         return d_separated_sets
-    
+
     def find_adjustment_sets_nuisance(self) -> List[Dict[str, Union[Set[str], Dict[str, Set[str]]]]]:
         """
         Finds adjustment sets for nuisance IV.
-        
+
         Returns:
         - List containing adjustment sets for each subset.
         """
-        
         all_nodes_except_XY_hidden = set(self.dag.nodes()) - self.X - {self.Y} - self.hidden_nodes
         subsets = list(self.powerset(all_nodes_except_XY_hidden))
         adjustment_sets_result = []
-        
+
         if self.type_effect == "direct":
             only_direct_effects = True
             nodes_on_causal_path = set()
-            
-            for node_x in self.X: 
+
+            for node_x in self.X:
                 causal_paths_from_x_to_Y = list(nx.all_simple_paths(self.dag, node_x, self.Y))
                 for path in causal_paths_from_x_to_Y:
                     nodes_on_causal_path.update(path)
-                
+
             for node in nodes_on_causal_path:
                 if node not in self.X and node not in {self.Y}:
                     only_direct_effects = False
@@ -245,7 +295,9 @@ class AdjustmentSetFinder:
                 subset_set = set(subset)
                 X = self.X | subset_set
 
-                adjustment_set_finder = AdjustmentSetFinder(self.dag, X, self.Y, self.hidden_nodes, self.type_effect, self.one_suffices)
+                adjustment_set_finder = NIVStrategyFinder(
+                    self.dag, X, self.Y, self.hidden_nodes, self.type_effect, self.one_suffices
+                )
                 adjustment_set_finder.remove_causal_paths()
                 adjustment_set_finder.generate_all_subset_combinations()
                 adjustment_sets = adjustment_set_finder.find_adjustment_sets_conditional()
@@ -256,7 +308,7 @@ class AdjustmentSetFinder:
                             adjustment_set_result = {
                                 "Nuisance Set": subset,
                                 "Instrument Set": adj_set["Instrument Set"],
-                                "Conditional Set": adj_set["Conditional Set"]
+                                "Conditional Set": adj_set["Conditional Set"],
                             }
                             if self.one_suffices:
                                 return [adjustment_set_result]
@@ -266,7 +318,7 @@ class AdjustmentSetFinder:
 
     def reset(self):
         """
-        Reset the internal state of the AdjustmentSetFinder.
+        Reset the internal state of the NIVStrategyFinder.
         """
         self.nodes_on_causal_path = set()
         self.descendant_Y = set()

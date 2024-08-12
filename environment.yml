@@ -3,11 +3,17 @@ channels:
   - conda-forge
 dependencies:
   - python
-  - pandas
+  - pip
+  - ipykernel
   - numpy
+  - pandas
   - networkx
   - matplotlib
-  - linearmodels
   - scipy
   - statsmodels
   - seaborn
+  - linearmodels
+  - openssl
+  - pickle
+  - pip:
+    - warnings

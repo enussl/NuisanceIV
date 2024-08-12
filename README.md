@@ -37,3 +37,5 @@ Below are instructions to set up and run the code.
     conda env create -f environment.yml
     conda activate nuisanceiv-env
     ```
+    
+Ignore the imports at the beginning of the .ipynb and the .py files if you work with environments. It is meant as an easy help for people not as familiar with environments.
