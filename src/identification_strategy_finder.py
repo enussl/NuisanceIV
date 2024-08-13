@@ -25,6 +25,7 @@ import statsmodels.api as sm
 import warnings
 import inspect
 
+np.random.seed(0)
 
 
 class NIVStrategyFinder:
